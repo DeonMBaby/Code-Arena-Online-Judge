@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: oj_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build: ./backend
+    container_name: oj_backend
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/onlinejudge
+      - JWT_SECRET=your_super_secret_key_change_this
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # for Docker-in-Docker sandbox
+    depends_on:
+      - mongodb
+
+  frontend:
+    build: ./frontend
+    container_name: oj_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
