@@ -88,6 +88,21 @@ export default function ProblemDetail() {
             <pre>{problem.statement}</pre>
           </article>
 
+
+  {problem.testCases?.[0] && (
+    <article className="statement-card">
+    <h3 style={{ marginTop: 0 }}>Example</h3>
+    <p style={{ marginBottom: 4 }}><strong>Input:</strong></p>
+    <pre>{problem.testCases[0].input}</pre>
+    {problem.testCases[0].output !== undefined && (
+      <>
+        <p style={{ marginBottom: 4 }}><strong>Output:</strong></p>
+        <pre>{problem.testCases[0].output}</pre>
+      </>
+    )}
+  </article>
+)}
+
           <section className="history-card">
             <div className="section-heading">
               <h3>Your recent submissions</h3>

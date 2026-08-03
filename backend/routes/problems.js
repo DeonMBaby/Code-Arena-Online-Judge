@@ -33,7 +33,6 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const problem = await Problem.findById(req.params.id)
-      .select('-testCases.output')
       .populate('createdBy', 'fullName');
 
     if (!problem) {
@@ -41,7 +40,20 @@ router.get('/:id', async (req, res) => {
     }
 
     const submissionCount = await Submission.countDocuments({ problem: req.params.id });
-    res.json({ ...problem.toObject(), submissionCount });
+
+    // Expose only the FIRST test case's output as a public "sample" example.
+    // Every other test case's expected output stays hidden so users can't
+    // just read answers off the API — only its input is shown (if shown at all).
+    const testCasesForClient = problem.testCases.map((tc, index) => ({
+      input: tc.input,
+      output: index === 0 ? tc.output : undefined
+    }));
+
+    res.json({
+      ...problem.toObject(),
+      testCases: testCasesForClient,
+      submissionCount
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
