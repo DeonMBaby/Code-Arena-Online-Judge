@@ -10,6 +10,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [showResend, setShowResend] = useState(false);
+  // NEW: track whether the last failure was specifically "wrong credentials"
+  // so we can offer a Forgot Password link right where the user needs it.
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,6 +31,7 @@ export default function Login() {
     setError('');
     setMessage('');
     setShowResend(false);
+    setShowForgotPassword(false);
     try {
       const { data } = await api.post('/auth/login', form);
       login(data.user, data.token);
@@ -37,6 +41,13 @@ export default function Login() {
       if (err.response?.status === 403) {
         setError('Your email is not verified.');
         setShowResend(Boolean(form.email));
+      } else if (err.response?.status === 400) {
+        // Backend intentionally returns a generic "Invalid credentials" for
+        // both "no such user" and "wrong password", so we can't tell which
+        // one it was — but either way, Forgot Password is the right next
+        // step to offer, so surface it any time login fails this way.
+        setError(payload?.message || 'Invalid credentials');
+        setShowForgotPassword(true);
       } else {
         setError(payload?.message || 'Login failed');
       }
@@ -74,7 +85,19 @@ export default function Login() {
           <h2>Login</h2>
           <p className="section-copy">Use your verified account to submit code and unlock profile insights.</p>
 
-          {error && <div className="alert alert-error">{error}</div>}
+          {error && (
+            <div className="alert alert-error">
+              {error}
+              {showForgotPassword && (
+                <>
+                  {' '}
+                  <Link to="/forgot-password" state={{ email: form.email }}>
+                    Forgot password?
+                  </Link>
+                </>
+              )}
+            </div>
+          )}
           {message && <div className="alert alert-success">{message}</div>}
 
           <div className="form-grid">
@@ -106,6 +129,9 @@ export default function Login() {
 
           <p className="auth-switch">
             Need an account? <Link to="/register">Sign up</Link>
+          </p>
+          <p className="auth-switch">
+            <Link to="/forgot-password">Forgot your password?</Link>
           </p>
         </section>
       </div>
