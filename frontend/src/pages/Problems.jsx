@@ -74,10 +74,14 @@ export default function Problems() {
             <div className="list-grid">
               {problems.map((problem) => (
                 <article key={problem._id} className="problem-card">
+                  
                   <div className="problem-topline">
-                    <span className={`badge badge-${problem.difficulty?.toLowerCase()}`}>{problem.difficulty}</span>
-                    <span className="muted">{problem.code}</span>
-                  </div>
+  <span className={`badge badge-${problem.difficulty?.toLowerCase()}`}>{problem.difficulty}</span>
+  <span className="muted">{problem.code}</span>
+  {problem.solved && (
+    <span className="badge" style={{ background: '#1a7a5e', color: '#fff' }}>✓ Solved</span>
+  )}
+</div>
                   <h3>{problem.name}</h3>
                   <p className="problem-meta">
                     Created {new Date(problem.createdAt).toLocaleDateString()}
