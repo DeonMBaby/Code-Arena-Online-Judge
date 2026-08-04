@@ -1,7 +1,34 @@
+const jwt = require('jsonwebtoken');
 const router = require('express').Router();
 const Problem = require('../models/Problem');
 const Submission = require('../models/Submission');
 const auth = require('../middleware/auth');
+
+// This route stays public (anyone can browse problems without logging in),
+// but if a valid token IS present, we use it to figure out which of these
+// problems the current user has already solved, so the frontend can show a
+// "Solved" badge. Manually checking the token here (rather than using the
+// `auth` middleware, which would reject the request entirely if no/invalid
+// token is present) is what lets this stay optional instead of required.
+async function getSolvedIdsForRequest(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return new Set();
+  }
+
+  try {
+    const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+    const solved = await Submission.distinct('problem', {
+      user: decoded.id,
+      verdict: 'Accepted'
+    });
+    return new Set(solved.map((id) => id.toString()));
+  } catch {
+    // Invalid/expired token on a public route — just treat as logged out
+    // rather than failing the whole request.
+    return new Set();
+  }
+}
 
 router.get('/', async (req, res) => {
   try {
@@ -19,12 +46,20 @@ router.get('/', async (req, res) => {
       ];
     }
 
+    // No longer populates createdBy — the creator's name is intentionally
+    // not exposed on the problem list.
     const problems = await Problem.find(query)
       .select('-testCases')
-      .populate('createdBy', 'fullName')
       .sort({ createdAt: -1 });
 
-    res.json(problems);
+    const solvedIds = await getSolvedIdsForRequest(req);
+
+    const withSolvedFlag = problems.map((p) => ({
+      ...p.toObject(),
+      solved: solvedIds.has(p._id.toString())
+    }));
+
+    res.json(withSolvedFlag);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -32,8 +67,9 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const problem = await Problem.findById(req.params.id)
-      .populate('createdBy', 'fullName');
+    // No longer populates createdBy — the creator's name is intentionally
+    // not exposed on the problem detail page either.
+    const problem = await Problem.findById(req.params.id);
 
     if (!problem) {
       return res.status(404).json({ message: 'Problem not found' });
@@ -41,18 +77,21 @@ router.get('/:id', async (req, res) => {
 
     const submissionCount = await Submission.countDocuments({ problem: req.params.id });
 
-    // Expose only the FIRST test case's output as a public "sample" example.
-    // Every other test case's expected output stays hidden so users can't
-    // just read answers off the API — only its input is shown (if shown at all).
+    // Expose only the FIRST test case's output as a public "sample"
+    // example. Every other test case's expected output stays hidden so
+    // users can't just read answers off the API.
     const testCasesForClient = problem.testCases.map((tc, index) => ({
       input: tc.input,
       output: index === 0 ? tc.output : undefined
     }));
 
+    const solvedIds = await getSolvedIdsForRequest(req);
+
     res.json({
       ...problem.toObject(),
       testCases: testCasesForClient,
-      submissionCount
+      submissionCount,
+      solved: solvedIds.has(problem._id.toString())
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -92,8 +131,7 @@ router.post('/', auth, async (req, res) => {
       createdBy: req.user.id
     });
 
-    const populated = await problem.populate('createdBy', 'fullName');
-    res.status(201).json(populated);
+    res.status(201).json(problem);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
