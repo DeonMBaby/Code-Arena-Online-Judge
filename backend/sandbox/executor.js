@@ -18,8 +18,49 @@ const DOCKER_IMAGES = {
 const FILE_CONFIG = {
   cpp:    { filename: 'solution.cpp',  compile: true  },
   python: { filename: 'solution.py',   compile: false },
-  java:   { filename: 'Solution.java', compile: true  }
+  java:   { filename: 'Solution.java', compile: true  } // overridden per-submission for java, see detectJavaClassName()
 };
+
+// Java reserved words can never legally be a class name — if one somehow
+// ended up here (shouldn't happen given the regex below, but validate
+// explicitly rather than trust the match blindly, since this string gets
+// interpolated directly into shell commands).
+const JAVA_RESERVED_WORDS = new Set([
+  'abstract','assert','boolean','break','byte','case','catch','char','class',
+  'const','continue','default','do','double','else','enum','extends','final',
+  'finally','float','for','goto','if','implements','import','instanceof','int',
+  'interface','long','native','new','package','private','protected','public',
+  'return','short','static','strictfp','super','switch','synchronized','this',
+  'throw','throws','transient','try','void','volatile','while','true','false','null'
+]);
+
+// A valid Java identifier: starts with a letter/_/$, followed by
+// letters/digits/_/$, capped at a sane length. Re-checked explicitly (not
+// just relied on via the extraction regex) so this function is safe to
+// trust on its own if ever reused elsewhere.
+function isValidJavaIdentifier(name) {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= 100 &&
+    /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) &&
+    !JAVA_RESERVED_WORDS.has(name)
+  );
+}
+
+// Java requires the filename to exactly match the public class name, so a
+// hardcoded "Solution.java" only worked if the user happened to name their
+// class Solution. This detects whatever the user actually named their
+// public class, validates it's a real, safe identifier, and falls back to
+// "Main" if none is found or the extracted name fails validation — so
+// submissions using `public class Main`, `public class Foo`, etc. all
+// compile correctly, matching how real judges (Codeforces, HackerRank)
+// behave, without trusting unvalidated input into shell commands.
+function detectJavaClassName(code) {
+  const match = code.match(/public\s+class\s+([A-Za-z_$][A-Za-z0-9_$]*)/);
+  const candidate = match ? match[1] : null;
+  return candidate && isValidJavaIdentifier(candidate) ? candidate : 'Main';
+}
 
 // FIX: the container mounts /code read-only (so a submission can't tamper
 // with the host filesystem it's mounted from), but that means g++/javac
@@ -30,21 +71,21 @@ const FILE_CONFIG = {
 // /workdir, that IS writable and executable, copy the source there, and
 // compile/run from there instead. /code stays read-only and is only used
 // to read the original source + the test case input.
-function buildCompileCommand(language, containerName) {
+function buildCompileCommand(language, containerName, javaClassName) {
   switch (language) {
     case 'cpp':
       return `docker exec ${containerName} sh -c "cp /code/solution.cpp /workdir/solution.cpp && g++ -O2 -o /workdir/solution /workdir/solution.cpp" 2>&1`;
     case 'java':
-      return `docker exec ${containerName} sh -c "cp /code/Solution.java /workdir/Solution.java && javac -d /workdir /workdir/Solution.java" 2>&1`;
+      return `docker exec ${containerName} sh -c "cp /code/${javaClassName}.java /workdir/${javaClassName}.java && javac -d /workdir /workdir/${javaClassName}.java" 2>&1`;
     case 'python':
       return null; // no compile step
   }
 }
 
-function getRunCmd(language) {
+function getRunCmd(language, javaClassName) {
   switch (language) {
     case 'cpp':    return '/workdir/solution';
-    case 'java':   return 'java -cp /workdir Solution';
+    case 'java':   return `java -cp /workdir ${javaClassName}`;
     case 'python': return 'python3 /code/solution.py'; // interpreted directly off the read-only mount, no exec bit needed
   }
 }
@@ -54,7 +95,12 @@ async function executeCode(language, code, input) {
   const tmpDir = path.join(os.tmpdir(), `oj_${jobId}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const { filename } = FILE_CONFIG[language];
+  // For Java, the filename on disk must match whatever public class name
+  // the user actually wrote — everything downstream (compile + run
+  // commands) uses this detected name instead of a hardcoded "Solution".
+  const javaClassName = language === 'java' ? detectJavaClassName(code) : null;
+  const filename = language === 'java' ? `${javaClassName}.java` : FILE_CONFIG[language].filename;
+
   const codeFile = path.join(tmpDir, filename);
   const inputFile = path.join(tmpDir, 'input.txt');
 
@@ -81,7 +127,7 @@ async function executeCode(language, code, input) {
       { timeout: 15000 }
     );
 
-    const compileCmd = buildCompileCommand(language, containerName);
+    const compileCmd = buildCompileCommand(language, containerName, javaClassName);
 
     // Compile if needed
     if (compileCmd) {
@@ -97,7 +143,7 @@ async function executeCode(language, code, input) {
     let output;
     try {
       output = execSync(
-        `docker exec -i ${containerName} sh -c "timeout 5 ${getRunCmd(language)} < /code/input.txt"`,
+        `docker exec -i ${containerName} sh -c "timeout 5 ${getRunCmd(language, javaClassName)} < /code/input.txt"`,
         { timeout: TIME_LIMIT_MS + 2000, encoding: 'utf8' }
       );
     } catch (err) {
