@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import api from '../api';
@@ -16,7 +16,7 @@ int main() {
 `,
   java: `import java.util.*;
 
-public class Solution {
+public class Main {
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
         // your code here
@@ -32,8 +32,13 @@ export default function ProblemDetail() {
   const [language, setLanguage] = useState('cpp');
   const [code, setCode] = useState(STARTERS.cpp);
   const [submitting, setSubmitting] = useState(false);
+  const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [mySubmissions, setMySubmissions] = useState([]);
+  // Auto-scroll target: after Run or Submit resolves, we scroll this into
+  // view so the verdict is immediately visible instead of requiring a
+  // manual scroll down past the editor.
+  const resultRef = useRef(null);
 
   useEffect(() => {
     api.get(`/problems/${id}`).then((response) => setProblem(response.data));
@@ -42,9 +47,43 @@ export default function ProblemDetail() {
     }
   }, [id, user]);
 
+  useEffect(() => {
+    if (result && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [result]);
+
   const handleLanguageChange = (nextLanguage) => {
     setLanguage(nextLanguage);
     setCode(STARTERS[nextLanguage]);
+  };
+
+  const handleRun = async () => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+
+    setRunning(true);
+    setResult(null);
+    try {
+      const { data } = await api.post('/submissions/run', { problemId: id, code, language });
+      setResult({
+        isRun: true,
+        verdict: data.verdict,
+        output: data.output,
+        expectedOutput: data.expectedOutput,
+        timeTaken: data.timeTaken
+      });
+    } catch (err) {
+      setResult({
+        isRun: true,
+        verdict: 'Error',
+        output: err.response?.data?.message || 'Run failed'
+      });
+    } finally {
+      setRunning(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -57,10 +96,11 @@ export default function ProblemDetail() {
     setResult(null);
     try {
       const { data } = await api.post('/submissions', { problemId: id, code, language });
-      setResult(data);
+      setResult({ isRun: false, ...data });
       setMySubmissions((current) => [data, ...current].slice(0, 10));
     } catch (err) {
       setResult({
+        isRun: false,
         verdict: 'Error',
         output: err.response?.data?.message || 'Submission failed'
       });
@@ -83,25 +123,24 @@ export default function ProblemDetail() {
             <span className="muted">{problem.submissionCount} submissions</span>
           </div>
           <h1>{problem.name}</h1>
-          <p className="section-copy">Created {new Date(problem.createdAt).toLocaleDateString()}{problem.createdBy?.fullName ? ` by ${problem.createdBy.fullName}` : ''}</p>
+          <p className="section-copy">Created {new Date(problem.createdAt).toLocaleDateString()}</p>
           <article className="statement-card">
             <pre>{problem.statement}</pre>
           </article>
 
-
-  {problem.testCases?.[0] && (
-    <article className="statement-card">
-    <h3 style={{ marginTop: 0 }}>Example</h3>
-    <p style={{ marginBottom: 4 }}><strong>Input:</strong></p>
-    <pre>{problem.testCases[0].input}</pre>
-    {problem.testCases[0].output !== undefined && (
-      <>
-        <p style={{ marginBottom: 4 }}><strong>Output:</strong></p>
-        <pre>{problem.testCases[0].output}</pre>
-      </>
-    )}
-  </article>
-)}
+          {problem.testCases?.[0] && (
+            <article className="statement-card">
+              <h3 style={{ marginTop: 0 }}>Example</h3>
+              <p style={{ marginBottom: 4 }}><strong>Input:</strong></p>
+              <pre>{problem.testCases[0].input}</pre>
+              {problem.testCases[0].output !== undefined && (
+                <>
+                  <p style={{ marginBottom: 4 }}><strong>Output:</strong></p>
+                  <pre>{problem.testCases[0].output}</pre>
+                </>
+              )}
+            </article>
+          )}
 
           <section className="history-card">
             <div className="section-heading">
@@ -136,9 +175,14 @@ export default function ProblemDetail() {
                 </button>
               ))}
             </div>
-            <button className="btn btn-success" onClick={handleSubmit} disabled={submitting}>
-              {submitting ? 'Judging...' : 'Submit solution'}
-            </button>
+            <div className="filter-row">
+              <button className="btn btn-outline" onClick={handleRun} disabled={running || submitting}>
+                {running ? 'Running...' : 'Run Code'}
+              </button>
+              <button className="btn btn-success" onClick={handleSubmit} disabled={submitting || running}>
+                {submitting ? 'Judging...' : 'Submit solution'}
+              </button>
+            </div>
           </div>
 
           <div className="editor-panel">
@@ -157,17 +201,25 @@ export default function ProblemDetail() {
             />
           </div>
 
-          <div className="result-panel">
+          <div className="result-panel" ref={resultRef}>
             {result ? (
               <>
                 <div className="result-header">
-                  <span className={`status-text status-${String(result.verdict).toLowerCase().replace(/\s+/g, '-')}`}>{result.verdict}</span>
+                  <span className={`status-text status-${String(result.verdict).toLowerCase().replace(/\s+/g, '-')}`}>
+                    {result.isRun ? `Run result: ${result.verdict}` : result.verdict}
+                  </span>
                   {result.timeTaken ? <span className="muted">{result.timeTaken}ms</span> : null}
                 </div>
                 <pre>{result.output || 'No output'}</pre>
+                {result.isRun && result.expectedOutput !== undefined && (
+                  <>
+                    <p style={{ marginTop: 12, marginBottom: 4, color: '#a9c9bb' }}><strong>Expected (sample):</strong></p>
+                    <pre>{result.expectedOutput}</pre>
+                  </>
+                )}
               </>
             ) : (
-              <div className="empty-state compact">Submit code to see verdicts and execution output here.</div>
+              <div className="empty-state compact">Run against the sample input, or submit to see verdicts here.</div>
             )}
           </div>
         </section>

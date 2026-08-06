@@ -3,7 +3,61 @@ const router = require('express').Router();
 const Submission = require('../models/Submission');
 const Problem = require('../models/Problem');
 const auth = require('../middleware/auth');
-const { judgeSubmission } = require('../sandbox/executor');
+const { judgeSubmission, executeCode } = require('../sandbox/executor');
+
+// "Run Code" — executes the user's code against ONLY the public sample
+// test case (index 0) and returns the raw output, without creating a
+// Submission record and without affecting submission counts/history. This
+// lets users sanity-check their code before committing to a real Submit,
+// same as Run vs Submit on most judges (Codeforces, LeetCode, etc.).
+router.post('/run', auth, async (req, res) => {
+  try {
+    const { problemId, code, language } = req.body;
+
+    if (!problemId || !code?.trim()) {
+      return res.status(400).json({ message: 'Problem and source code are required' });
+    }
+    if (!['cpp', 'python', 'java'].includes(language)) {
+      return res.status(400).json({ message: 'Unsupported language' });
+    }
+
+    const problem = await Problem.findById(problemId);
+    if (!problem) {
+      return res.status(404).json({ message: 'Problem not found' });
+    }
+    if (!problem.testCases || problem.testCases.length === 0) {
+      return res.status(400).json({ message: 'This problem has no sample test case to run against' });
+    }
+
+    const sample = problem.testCases[0];
+    const result = await executeCode(language, code, sample.input);
+
+    // Compile errors, runtime errors, and TLE come back with a verdict set
+    // already — pass those straight through.
+    if (result.verdict) {
+      return res.json({
+        ran: true,
+        verdict: result.verdict,
+        output: result.output,
+        timeTaken: result.timeTaken || 0
+      });
+    }
+
+    // Otherwise it ran successfully — return the raw output plus the
+    // expected sample output so the frontend can show both side by side.
+    // Deliberately NOT computing pass/fail here — "Run" is for eyeballing
+    // output, "Submit" is what actually judges it.
+    res.json({
+      ran: true,
+      verdict: 'Ran',
+      output: result.output,
+      expectedOutput: sample.output,
+      timeTaken: result.timeTaken
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 router.post('/', auth, async (req, res) => {
   try {

@@ -184,4 +184,4 @@ async function judgeSubmission(language, code, testCases) {
   return { verdict: 'Accepted', output: 'All test cases passed', timeTaken: 0 };
 }
 
-module.exports = { judgeSubmission };
+module.exports = { judgeSubmission, executeCode };
